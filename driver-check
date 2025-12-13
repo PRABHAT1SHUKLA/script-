@@ -1,0 +1,28 @@
+
+
+
+Write-Host "==================================" -ForegroundColor Cyan
+Write-Host "System Update Checker" -ForegroundColor Cyan
+Write-Host "==================================" -ForegroundColor Cyan
+Write-Host ""
+
+function Check-WindowsUpdates {
+    Write-Host "[1/5] Checking Windows Updates..." -ForegroundColor Yellow
+    try {
+        $Session = New-Object -ComObject Microsoft.Update.Session
+        $Searcher = $Session.CreateUpdateSearcher()
+        $Updates = $Searcher.Search("IsInstalled=0 and Type='Software'")
+        
+        if ($Updates.Updates.Count -eq 0) {
+            Write-Host "  ✓ Windows is up to date" -ForegroundColor Green
+        } else {
+            Write-Host "  ! $($Updates.Updates.Count) Windows update(s) available" -ForegroundColor Red
+            foreach ($Update in $Updates.Updates) {
+                Write-Host "    - $($Update.Title)" -ForegroundColor Gray
+            }
+        }
+    } catch {
+        Write-Host "  ✗ Error checking Windows updates: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    Write-Host ""
+}
