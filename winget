@@ -1,0 +1,41 @@
+function Check-Winget {
+    Write-Host "[3/5] Checking Winget Applications..." -ForegroundColor Yellow
+    try {
+        $wingetPath = Get-Command winget -ErrorAction SilentlyContinue
+        if ($wingetPath) {
+            $upgradable = winget upgrade --accept-source-agreements 2>&1 | Select-String -Pattern "upgrades available"
+            $output = winget upgrade
+            
+            if ($output -match "No installed package found") {
+                Write-Host "  ✓ All winget apps are up to date" -ForegroundColor Green
+            } else {
+                $lines = $output -split "`n" | Where-Object { $_ -match '\S' -and $_ -notmatch "^Name|^----|upgrades available" }
+                $count = ($lines | Measure-Object).Count
+                if ($count -gt 0) {
+                    Write-Host "  ! $count app(s) can be upgraded via winget" -ForegroundColor Red
+                    Write-Host "    Run 'winget upgrade --all' to update" -ForegroundColor Gray
+                } else {
+                    Write-Host "  ✓ All winget apps are up to date" -ForegroundColor Green
+                }
+            }
+        } else {
+            Write-Host "  ! Winget not found. Install from Microsoft Store." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "  ✗ Error checking winget: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    Write-Host ""
+}
+
+function Check-MicrosoftStore {
+    Write-Host "[4/5] Checking Microsoft Store Apps..." -ForegroundColor Yellow
+    try {
+        Write-Host "  ℹ Opening Microsoft Store to check for updates..." -ForegroundColor Cyan
+        Write-Host "    Please check manually: MS Store > Library > Get Updates" -ForegroundColor Gray
+        Start-Process "ms-windows-store://downloadsandupdates"
+    } catch {
+        Write-Host "  ✗ Error opening Microsoft Store: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    Write-Host ""
+}
+
