@@ -1,0 +1,159 @@
+
+
+# ================= CONFIGURATION =================
+ADMIN_EMAIL="your.email@example.com"
+HOSTNAME=$(hostname -f)
+THRESHOLD_CPU=85          # % CPU usage
+THRESHOLD_MEM=90          # % memory used
+THRESHOLD_DISK=90         # % disk used
+THRESHOLD_LOAD=10         # 5-min load average (adjust for your CPU count)
+CRITICAL_SERVICES="sshd docker nginx mysql postgresql apache2"  # space separated
+IMPORTANT_PORTS="22 80 443 3306 5432"   # space separated
+
+# Optional: Pushover[](https://pushover.net) or other notification
+# Uncomment and fill if you want push notifications
+# PUSHOVER_ENABLED=false
+# PUSHOVER_USER="u12345..."
+# PUSHOVER_TOKEN="a1b2c3d4e5f6g7h8i9j0"
+
+# Colors for output (useful when running manually)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# ================= FUNCTIONS =================
+
+send_alert() {
+    local subject="$1"
+    local message="$2"
+    
+    # Email alert
+    echo -e "$message" | mail -s "[ALERT] $HOSTNAME - $subject" "$ADMIN_EMAIL"
+    
+    # Optional: Pushover notification
+    if [[ "$PUSHOVER_ENABLED" == "true" ]]; then
+        curl -s \
+            --form-string "token=$PUSHOVER_TOKEN" \
+            --form-string "user=$PUSHOVER_USER" \
+            --form-string "title=$HOSTNAME ALERT" \
+            --form-string "message=$message" \
+            https://api.pushover.net/1/messages.json >/dev/null
+    fi
+    
+    # Also log to file
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $subject" >> /var/log/server_monitor.log
+    echo "$message" >> /var/log/server_monitor.log
+    echo "----------------------------------------" >> /var/log/server_monitor.log
+}
+
+check_cpu() {
+    local cpu_usage
+    cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d. -f1)
+    
+    if (( cpu_usage > THRESHOLD_CPU )); then
+        send_alert "HIGH CPU USAGE" \
+            "CPU usage is ${cpu_usage}% (threshold: ${THRESHOLD_CPU}%)\n\n$(top -bn1 | head -n 15)"
+        echo -e "${RED}CPU CRITICAL: ${cpu_usage}%${NC}"
+    else
+        echo -e "${GREEN}CPU OK: ${cpu_usage}%${NC}"
+    fi
+}
+
+check_memory() {
+    local mem_total mem_used mem_free mem_used_pct
+    read mem_total mem_used mem_free _ < <(free -m | awk '/Mem:/ {print $2,$3,$4}')
+    
+    mem_used_pct=$((mem_used * 100 / mem_total))
+    
+    if (( mem_used_pct > THRESHOLD_MEM )); then
+        send_alert "HIGH MEMORY USAGE" \
+            "Memory usage: ${mem_used_pct}% (${mem_used}/${mem_total} MB)\nThreshold: ${THRESHOLD_MEM}%\n\n$(free -h)"
+        echo -e "${RED}MEM CRITICAL: ${mem_used_pct}%${NC}"
+    else
+        echo -e "${GREEN}Memory OK: ${mem_used_pct}%${NC}"
+    fi
+}
+
+check_disk() {
+    local disk_alerts=""
+    while read -r line; do
+        local usage mountpoint
+        usage=$(echo "$line" | awk '{print $5}' | tr -d '%')
+        mountpoint=$(echo "$line" | awk '{print $6}')
+        
+        if (( usage > THRESHOLD_DISK )); then
+            disk_alerts="${disk_alerts}\n- ${mountpoint}: ${usage}% full"
+        fi
+    done < <(df -h | grep '^/dev/' | grep -vE '/snap|tmpfs')
+    
+    if [[ -n "$disk_alerts" ]]; then
+        send_alert "HIGH DISK USAGE" \
+            "Disks above ${THRESHOLD_DISK}% threshold:$disk_alerts\n\n$(df -h)"
+        echo -e "${RED}DISK CRITICAL on some partitions${NC}"
+    else
+        echo -e "${GREEN}Disk usage OK${NC}"
+    fi
+}
+
+check_load() {
+    local load5
+    load5=$(uptime | awk -F 'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
+    
+    if (( $(echo "$load5 > $THRESHOLD_LOAD" | bc -l) )); then
+        send_alert "HIGH LOAD AVERAGE" \
+            "5-min load: ${load5} (threshold: ${THRESHOLD_LOAD})\n\n$(uptime)\n\n$(ps aux --sort=-%cpu | head -n 15)"
+        echo -e "${RED}LOAD HIGH: ${load5}${NC}"
+    else
+        echo -e "${GREEN}Load OK: ${load5}${NC}"
+    fi
+}
+
+check_services() {
+    local failed=""
+    for svc in $CRITICAL_SERVICES; do
+        if ! systemctl is-active --quiet "$svc" 2>/dev/null; then
+            failed="$failed $svc"
+        fi
+    done
+    
+    if [[ -n "$failed" ]]; then
+        send_alert "CRITICAL SERVICES DOWN" \
+            "The following services are not running:$failed\n\n$(systemctl status ${failed// / })"
+        echo -e "${RED}SERVICES DOWN:$failed${NC}"
+    else
+        echo -e "${GREEN}All critical services running${NC}"
+    fi
+}
+
+check_ports() {
+    local failed=""
+    for port in $IMPORTANT_PORTS; do
+        if ! ss -tuln | grep -q ":$port "; then
+            failed="$failed $port"
+        fi
+    done
+    
+    if [[ -n "$failed" ]]; then
+        send_alert "IMPORTANT PORTS CLOSED" \
+            "The following ports are not listening:$failed\n\n$(ss -tuln)"
+        echo -e "${RED}PORTS CLOSED:$failed${NC}"
+    else
+        echo -e "${GREEN}Important ports listening${NC}"
+    fi
+}
+
+# ================= MAIN =================
+
+echo "Server monitoring report for $HOSTNAME - $(date)"
+echo "=============================================="
+
+check_cpu
+check_memory
+check_disk
+check_load
+check_services
+check_ports
+
+echo "=============================================="
+echo "End of report"
