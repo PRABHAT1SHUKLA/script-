@@ -1,0 +1,20 @@
+WITH RECURSIVE TransitiveChain AS (
+    -- Base case: Direct dependencies
+    SELECT 
+        SourceAttr, 
+        TargetAttr, 
+        1 AS Depth
+    FROM DependencyTable
+    
+    UNION ALL
+    
+    -- Recursive step: Join direct with indirect
+    SELECT 
+        tc.SourceAttr, 
+        dt.TargetAttr, 
+        tc.Depth + 1
+    FROM TransitiveChain tc
+    JOIN DependencyTable dt ON tc.TargetAttr = dt.SourceAttr
+)
+-- Select only those that are NOT the original direct relationships
+SELECT DISTINCT * FROM TransitiveChain WHERE Depth > 1;
